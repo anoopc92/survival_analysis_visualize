@@ -5,274 +5,288 @@ import pandas as pd
 from io import BytesIO
 import base64
 
-st.set_page_config(layout="wide", page_title="PD / Survival Visualizer")
+st.set_page_config(layout="wide", page_title="PD / Survival Comparator")
 
 # -------------------------
 # Helper functions
 # -------------------------
 def series_from_manual(manual_vals, n):
-    """Take up to 5 manual values. If n > len(manual_vals), extend by repeating last value."""
     vals = list(manual_vals)
     if len(vals) == 0:
         vals = [0.01] * n
     if len(vals) >= n:
         return np.array(vals[:n])
-    # extend by repeating last value
     last = vals[-1]
-    vals_extended = vals + [last] * (n - len(vals))
-    return np.array(vals_extended)
-
+    return np.array(vals + [last]*(n-len(vals)))
 
 def series_from_ttc_with_noise(ttc, n, noise_level, random_seed=None):
-    """Generate PIT series around TTC with normally-distributed noise, truncated to [0,1]."""
     rng = np.random.RandomState(random_seed)
-    noise = rng.normal(loc=0.0, scale=noise_level, size=n)
-    series = np.clip(ttc + noise, 0.0, 0.9999)  # avoid exactly 1
-    return series
+    noise = rng.normal(0, noise_level, n)
+    return np.clip(ttc + noise, 0.0, 0.9999)
 
+def series_from_csv(uploaded_file, n):
+    df = pd.read_csv(uploaded_file)
+    # Take first numeric column
+    for col in df.columns:
+        if np.issubdtype(df[col].dtype, np.number):
+            series = df[col].values
+            return series_from_manual(series.tolist(), n)
+    st.warning("No numeric column found in CSV; using default series.")
+    return series_from_manual([], n)
 
 def survival_from_pit_series(pit):
-    """S(0)=1. S(i) = product_{k=1..i} (1 - pit[k-1])"""
     n = len(pit)
-    S = np.empty(n + 1)  # S[0]..S[n]
-    S[0] = 1.0
-    for i in range(1, n + 1):
-        S[i] = S[i - 1] * (1.0 - pit[i - 1])
-    return S  # length n+1
-
+    S = np.empty(n+1)
+    S[0]=1.0
+    for i in range(1,n+1):
+        S[i]=S[i-1]*(1-pit[i-1])
+    return S
 
 def compute_marginal_and_cumulative(S):
-    """Given survival array S[0..n], compute cumulative C[0..n] and marginal m[1..n] for periods 1..n"""
-    n = len(S) - 1
-    C = 1.0 - S  # vectorized, length n+1
-    marginal = np.empty(n + 1)
-    marginal[0] = 0.0
-    for i in range(1, n + 1):
-        marginal[i] = C[i] - C[i - 1]  # = S[i-1]*pit[i]
-    return C, marginal  # marginal[1..n] meaningful
+    n = len(S)-1
+    C = 1.0 - S
+    m = np.empty(n+1)
+    m[0]=0
+    for i in range(1,n+1):
+        m[i] = C[i]-C[i-1]
+    return C,m
 
+def survival_ttc_discrete(ttc,n):
+    return (1-ttc)**np.arange(0,n+1)
 
-def survival_ttc_discrete(ttc, n):
-    """Case 2: discrete TTC PD constant p. S(i) = (1 - p)^i for i=0..n"""
-    i = np.arange(0, n + 1)
-    S = (1.0 - ttc) ** i
-    return S
+def survival_exponential(lam,n):
+    return np.exp(-lam*np.arange(0,n+1))
 
+def plot_comparison_row(title, periods, data_list, labels, ylabel):
+    cols = st.columns(len(data_list))
+    figs=[]
+    for col,d,label in zip(cols,data_list,labels):
+        fig, ax = plt.subplots(figsize=(4.5,3))
+        ax.plot(periods,d,marker='o',linewidth=2)
+        ax.set_title(f"{title} — {label}")
+        ax.set_xlabel("Period i")
+        ax.set_ylabel(ylabel)
+        ax.set_ylim(0.0,1.0)
+        ax.grid(True, linestyle="--", alpha=0.4)
+        col.pyplot(fig)
+        figs.append(fig)
+    return figs
 
-def survival_exponential(lam, n):
-    """Case 3: continuous exponential S(t)=exp(-lambda * t) at integer times t=0..n"""
-    t = np.arange(0, n + 1)
-    S = np.exp(-lam * t)
-    return S
+def plot_marginal_row(title, periods, marg_list, labels):
+    cols = st.columns(len(marg_list))
+    figs=[]
+    for col,m,label in zip(cols,marg_list,labels):
+        fig, ax = plt.subplots(figsize=(4.5,3))
+        ax.bar(periods,m,alpha=0.7)
+        ax.set_title(f"{title} — {label}")
+        ax.set_xlabel("Period i")
+        ax.set_ylabel("Marginal PD")
+        ax.set_ylim(0.0,max(0.01, max([m_.max() for m_ in marg_list])*1.1))
+        ax.grid(True,axis='y', linestyle="--", alpha=0.4)
+        col.pyplot(fig)
+        figs.append(fig)
+    return figs
 
-
-def plot_column(title, periods, S, C, marginal, axes_width=4.5, axes_height=3.0):
-    """Return matplotlib figure with Survival + Cumulative lines and Marginal bars stacked."""
-    fig, ax = plt.subplots(3, 1, figsize=(axes_width, axes_height * 3), constrained_layout=True)
-
-    # Survival
-    ax[0].plot(periods, S, marker='o', linewidth=2)
-    ax[0].set_title(f"{title} — Survival rate S(i)")
-    ax[0].set_xlabel("Period i")
-    ax[0].set_ylabel("Survival S(i)")
-    ax[0].set_ylim(0.0, 1.0)
-    ax[0].grid(True, linestyle="--", alpha=0.4)
-
-    # Cumulative PD
-    ax[1].plot(periods, C, marker='o', linewidth=2, color='tab:orange')
-    ax[1].set_title(f"{title} — Cumulative PD C(i) = 1 - S(i)")
-    ax[1].set_xlabel("Period i")
-    ax[1].set_ylabel("Cumulative PD")
-    ax[1].set_ylim(0.0, 1.0)
-    ax[1].grid(True, linestyle="--", alpha=0.4)
-
-    # Marginal PD (bars)
-    ax[2].bar(periods, marginal, alpha=0.7)
-    ax[2].set_title(f"{title} — Marginal PD m(i) = C(i)-C(i-1)")
-    ax[2].set_xlabel("Period i")
-    ax[2].set_ylabel("Marginal PD")
-    ax[2].set_ylim(0.0, max(0.01, marginal.max() * 1.1))
-    ax[2].grid(True, axis='y', linestyle="--", alpha=0.4)
-
-    return fig
-
-
-def df_display_table(periods, S, C, marginal):
-    df = pd.DataFrame({
-        "Period": periods,
-        "Survival S(i)": np.round(S, 6),
-        "Cumulative PD C(i)": np.round(C, 6),
-        "Marginal PD m(i)": np.round(marginal, 6)
-    })
-    return df
-
-
-def fig_to_png_bytes(fig):
-    buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    buf.seek(0)
-    return buf.read()
-
-
-def download_link_for_bytes(data_bytes, filename, label):
-    b64 = base64.b64encode(data_bytes).decode()
-    href = f'<a href="data:file/png;base64,{b64}" download="{filename}">{label}</a>'
-    return href
-
+def df_display_table(periods,S_list,C_list,m_list,labels):
+    dfs=[]
+    for S,C,m,label in zip(S_list,C_list,m_list,labels):
+        df = pd.DataFrame({
+            "Period": periods,
+            f"Survival S(i) [{label}]": np.round(S,6),
+            f"Cumulative PD C(i) [{label}]": np.round(C,6),
+            f"Marginal PD m(i) [{label}]": np.round(m,6)
+        })
+        dfs.append(df)
+    return dfs
 
 # -------------------------
-# UI / App
+# Sidebar / Global controls
 # -------------------------
-st.title("📈 PD / Survival Visualizer — Marginal PD, Survival, and Cumulative PD")
-st.write("""
-This app demonstrates how **Survival rate**, **Cumulative PD**, and **Marginal PD** relate under three modelling approaches:
-- **Case 1 (PIT time series)**: arbitrary period-by-period PIT PDs (user input or generated from TTC + noise)
-- **Case 2 (Discrete TTC)**: constant TTC PD per period, survival is \((1-p)^i\)
-- **Case 3 (Exponential)**: continuous hazard \(S(t)=e^{-\lambda t}\) (discrete observations at integer t)
-Each column is independent so you can compare parameter choices side-by-side.
-""")
-
-st.markdown("---")
-
-# global controls
-n_periods = st.sidebar.slider("Number of periods (n)", 3, 30, 10)
+st.sidebar.header("Global settings")
+n_periods = st.sidebar.slider("Number of periods (n)",3,30,10)
 show_tables = st.sidebar.checkbox("Show numeric tables", value=True)
-random_seed = st.sidebar.number_input("Random seed (for noise reproducibility)", value=42, step=1)
+random_seed = st.sidebar.number_input("Random seed (for noise)",value=42,step=1)
 
-# Create three columns (Case1, Case2, Case3)
-col_case1, col_case2, col_case3 = st.columns(3)
+compare_mode = st.sidebar.radio("Comparison mode",["Three approaches","Same approach different parameters"])
 
-# -------------------------
-# CASE 1: PIT time series
-# -------------------------
-with col_case1:
-    st.header("Case 1 — PIT Time Series")
-    st.write("Survival defined by product:  S(0)=1;  S(i)=S(i-1)*(1 - PiT_PD(i))")
-    st.markdown("**Derivation (discrete PIT):**")
-    st.latex(r"S(0)=1")
-    st.latex(r"S(i)=\prod_{k=1}^i (1 - \mathrm{PiT\_PD}(k))")
-    st.latex(r"C(i)=1-S(i)")
-    st.latex(r"\text{Marginal } m(i)=C(i)-C(i-1)=\mathrm{PiT\_PD}(i)\times S(i-1)")
-
-    mode = st.selectbox("Input mode for PIT series", ["Default example series",
-                                                     "Manual (enter up to 5 PIT PDs)",
-                                                     "TTC PD + noise generator"], key="case1_mode")
-
-    if mode == "Default example series":
-        # an illustrative example series
-        pit_series_case1 = np.array([0.02, 0.03, 0.05, 0.04, 0.03])
-        st.info(f"Using default example PIT series (first 5 shown): {pit_series_case1.tolist()}")
-        pit_vals = series_from_manual(list(pit_series_case1), n_periods)
-
-    elif mode == "Manual (enter up to 5 PIT PDs)":
-        st.write("Enter up to 5 PIT PDs (values between 0 and 1). If n > 5, last value is repeated to fill periods.")
-        m1 = st.number_input("PIT PD 1", min_value=0.0, max_value=1.0, value=0.02, key="c1_m1")
-        m2 = st.number_input("PIT PD 2", min_value=0.0, max_value=1.0, value=0.03, key="c1_m2")
-        m3 = st.number_input("PIT PD 3", min_value=0.0, max_value=1.0, value=0.05, key="c1_m3")
-        m4 = st.number_input("PIT PD 4", min_value=0.0, max_value=1.0, value=0.04, key="c1_m4")
-        m5 = st.number_input("PIT PD 5", min_value=0.0, max_value=1.0, value=0.03, key="c1_m5")
-        manual_list = [m1, m2, m3, m4, m5]
-        pit_vals = series_from_manual(manual_list, n_periods)
-        st.write(f"PIT series used (length {n_periods}):")
-        st.write(np.round(pit_vals, 6).tolist())
-
-    else:  # TTC PD + noise
-        ttc = st.number_input("TTC PD (base)", min_value=0.0, max_value=1.0, value=0.03, key="c1_ttc")
-        noise = st.slider("Noise (std dev)", 0.0, 0.2, 0.02, key="c1_noise")
-        pit_vals = series_from_ttc_with_noise(ttc, n_periods, noise, random_seed)
-        st.write(f"Generated PIT series (TTC={ttc}, noise={noise}):")
-        st.write(np.round(pit_vals, 6).tolist())
-
-    # compute survival, cumulative, marginal
-    S_case1 = survival_from_pit_series(pit_vals)  # length n+1
-    C_case1, m_case1 = compute_marginal_and_cumulative(S_case1)
-
-    periods = np.arange(0, n_periods + 1)
-    periods_for_marginal = np.arange(0, n_periods + 1)
-
-    # prepare plots and table
-    fig1 = plot_column("Case 1 (PIT series)", periods, S_case1, C_case1, m_case1)
-    st.pyplot(fig1)
-
-    if show_tables:
-        df1 = df_display_table(periods, S_case1, C_case1, m_case1)
-        st.dataframe(df1)
-
-    # small explanation
-    st.markdown("**Notes (Case 1):** PIT series are per-period default probabilities. The survival at period i is the product of survival factors up to i. Marginal PD in period i equals PIT(i) * S(i-1).")
+# Synchronization options
+st.sidebar.markdown("### Synchronization options")
+sync_ttc = st.sidebar.checkbox("Sync TTC PD across columns", value=False)
+sync_lambda = st.sidebar.checkbox("Sync Lambda to TTC PD (λ=-ln(1-p))", value=False)
 
 # -------------------------
-# CASE 2: Discrete TTC PD
+# Determine columns & labels
 # -------------------------
-with col_case2:
-    st.header("Case 2 — Discrete TTC PD (constant per period)")
-    st.markdown("Assume constant TTC PD per period:  PiT_PD(i) = p (constant).")
-    st.markdown("**Derivation (discrete constant hazard):**")
-    st.latex(r"S(i)=\prod_{k=1}^i (1 - p) = (1-p)^i")
-    st.latex(r"C(i)=1-(1-p)^i")
-    st.latex(r"\text{Marginal } m(i) = (1-p)^{\,i-1}\,p")
-
-    ttc2 = st.number_input("TTC PD (p)", min_value=0.0, max_value=1.0, value=0.03, key="case2_ttc")
-    # Optionally allow different parameterization: allow "per-period varying p"? But spec says TTC PD.
-    S_case2 = survival_ttc_discrete(ttc2, n_periods)
-    C_case2, m_case2 = compute_marginal_and_cumulative(S_case2)
-
-    periods = np.arange(0, n_periods + 1)
-    fig2 = plot_column("Case 2 (Discrete TTC)", periods, S_case2, C_case2, m_case2)
-    st.pyplot(fig2)
-
-    if show_tables:
-        df2 = df_display_table(periods, S_case2, C_case2, m_case2)
-        st.dataframe(df2)
-
-    st.markdown("**Notes (Case 2):** With constant TTC PD p, marginal PD simplifies to \\((1-p)^{i-1} p\\). This is the binomial / geometric style discrete hazard.")
-
+if compare_mode=="Three approaches":
+    approach_labels=["Case 1 PIT","Case 2 TTC","Case 3 Exponential"]
+else:
+    approach_options = ["PIT series","TTC","Exponential"]
+    chosen_approach = st.sidebar.selectbox("Choose approach for all columns",approach_options)
+    approach_labels = [f"{chosen_approach} #{i+1}" for i in range(3)]
 
 # -------------------------
-# CASE 3: Exponential (continuous hazard)
+# Prepare input for each column
 # -------------------------
-with col_case3:
-    st.header("Case 3 — Exponential (continuous hazard)")
-    st.markdown("Assume continuous-time hazard with rate \\(\\lambda\\). Observing at integer times t=0,1,2,...")
-    st.markdown("**Derivation (exponential):**")
-    st.latex(r"S(t)=e^{-\lambda t}")
-    st.latex(r"C(t)=1-e^{-\lambda t}")
-    st.latex(r"\text{Discrete marginal between }(i-1,i]:\; m(i)=S(i-1)-S(i)=e^{-\lambda (i-1)}(1-e^{-\lambda})")
+pit_series_list=[]
+ttc_list=[]
+lambda_list=[]
 
-    lam = st.number_input("Lambda (λ) — hazard (continuous)", min_value=0.0001, max_value=10.0, value=0.03, key="case3_lambda")
-    S_case3 = survival_exponential(lam, n_periods)
-    C_case3, m_case3 = compute_marginal_and_cumulative(S_case3)
+for i in range(3):
+    st.sidebar.markdown(f"### Column {i+1}: {approach_labels[i]}")
+    if compare_mode=="Three approaches":
+        # Case1
+        if i==0:
+            input_mode = st.sidebar.selectbox(f"Column {i+1} PIT input mode", ["Default","Manual","TTC+noise","CSV upload"], key=f"c1_mode")
+            if input_mode=="Default":
+                pit_series = series_from_manual([0.02,0.03,0.05,0.04,0.03],n_periods)
+            elif input_mode=="Manual":
+                vals = []
+                for j in range(5):
+                    val = st.sidebar.number_input(f"Period {j+1}",0.0,1.0,0.02,key=f"c1_manual_{j}")
+                    vals.append(val)
+                pit_series = series_from_manual(vals,n_periods)
+            elif input_mode=="TTC+noise":
+                ttc_val = st.sidebar.number_input(f"TTC PD for Column {i+1}",0.0,1.0,0.03,key=f"c1_ttc")
+                noise = st.sidebar.slider(f"Noise std dev for Column {i+1}",0.0,0.2,0.02,key=f"c1_noise")
+                pit_series = series_from_ttc_with_noise(ttc_val,n_periods,noise,random_seed)
+            else: # CSV
+                uploaded_file = st.sidebar.file_uploader(f"Upload CSV PIT for Column {i+1}", type=['csv'], key=f"c1_csv")
+                if uploaded_file is not None:
+                    pit_series = series_from_csv(uploaded_file,n_periods)
+                else:
+                    pit_series = series_from_manual([0.02,0.03,0.05,0.04,0.03],n_periods)
+            pit_series_list.append(pit_series)
+        elif i==1:
+            ttc_val = st.sidebar.number_input(f"TTC PD for Column {i+1}",0.0,1.0,0.03,key=f"c2_ttc")
+            ttc_list.append(ttc_val)
+        else:
+            lam_val = st.sidebar.number_input(f"Lambda for Column {i+1}",0.0001,10.0,0.03,key=f"c3_lam")
+            lambda_list.append(lam_val)
+    else:
+        # Same approach different params
+        if chosen_approach=="PIT series":
+            input_mode = st.sidebar.selectbox(f"Column {i+1} PIT input mode", ["Default","Manual","TTC+noise","CSV upload"], key=f"c1_mode_{i}")
+            if input_mode=="Default":
+                pit_series = series_from_manual([0.02,0.03,0.05,0.04,0.03],n_periods)
+            elif input_mode=="Manual":
+                vals = []
+                for j in range(5):
+                    val = st.sidebar.number_input(f"Period {j+1} Col{i+1}",0.0,1.0,0.02,key=f"manual_{i}_{j}")
+                    vals.append(val)
+                pit_series = series_from_manual(vals,n_periods)
+            elif input_mode=="TTC+noise":
+                ttc_val = st.sidebar.number_input(f"TTC PD for Column {i+1}",0.0,1.0,0.03,key=f"ttc_{i}")
+                noise = st.sidebar.slider(f"Noise std dev for Column {i+1}",0.0,0.2,0.02,key=f"noise_{i}")
+                pit_series = series_from_ttc_with_noise(ttc_val,n_periods,noise,random_seed)
+            else:
+                uploaded_file = st.sidebar.file_uploader(f"Upload CSV PIT for Column {i+1}", type=['csv'], key=f"csv_{i}")
+                if uploaded_file is not None:
+                    pit_series = series_from_csv(uploaded_file,n_periods)
+                else:
+                    pit_series = series_from_manual([0.02,0.03,0.05,0.04,0.03],n_periods)
+            pit_series_list.append(pit_series)
+        elif chosen_approach=="TTC":
+            ttc_val = st.sidebar.number_input(f"TTC PD for Column {i+1}",0.0,1.0,0.03,key=f"ttc_{i}")
+            ttc_list.append(ttc_val)
+        else:
+            lam_val = st.sidebar.number_input(f"Lambda for Column {i+1}",0.0001,10.0,0.03,key=f"lam_{i}")
+            lambda_list.append(lam_val)
 
-    periods = np.arange(0, n_periods + 1)
-    fig3 = plot_column("Case 3 (Exponential)", periods, S_case3, C_case3, m_case3)
-    st.pyplot(fig3)
+# -------------------------
+# Sync options
+# -------------------------
+if sync_ttc and len(ttc_list)>0:
+    ttc_global = st.sidebar.number_input("Global TTC PD",0.0,1.0,0.03,key="global_ttc")
+    ttc_list = [ttc_global]*len(ttc_list)
+    # update PIT columns if using TTC+noise mode
+    for idx,pit_series in enumerate(pit_series_list):
+        pit_series_list[idx] = series_from_ttc_with_noise(ttc_global,n_periods,0.02,random_seed)
 
-    if show_tables:
-        df3 = df_display_table(periods, S_case3, C_case3, m_case3)
-        st.dataframe(df3)
+if sync_lambda and len(ttc_list)>0:
+    lambda_list = [-np.log(1-p) for p in ttc_list]
 
-    st.markdown("**Notes (Case 3):** Lambda controls the continuous hazard. For small λ, exponential approximates small discrete hazards. For comparison with TTC PD p, λ ≈ -ln(1-p) (so that 1 - e^{-λ} ≈ p).")
+# -------------------------
+# Compute S, C, m for each column
+# -------------------------
+S_list=[]
+C_list=[]
+m_list=[]
+periods=np.arange(0,n_periods+1)
 
-st.markdown("---")
-st.subheader("Quick comparisons & tips")
-st.write("""
-- **Comparing Case 2 and Case 3:** If you want the discrete per-period marginal to match approximately, set \\(\\lambda\\) so that \\(1-e^{-\\lambda} = p\\) (i.e. \\(\\lambda = -\\ln(1-p)\\)).
-- **Interpreting Marginal PD:** It is the *probability of default in that specific period*, conditional on survival to the period start.
-- **Cumulative PD** increases monotonically and approaches 1 as periods become large (depending on the hazard).
-""")
+for i in range(3):
+    if compare_mode=="Three approaches":
+        if i==0:
+            pit = pit_series_list[0]
+            S=survival_from_pit_series(pit)
+            C,m=compute_marginal_and_cumulative(S)
+        elif i==1:
+            ttc = ttc_list[0]
+            S=survival_ttc_discrete(ttc,n_periods)
+            C,m=compute_marginal_and_cumulative(S)
+        else:
+            lam = lambda_list[0]
+            S=survival_exponential(lam,n_periods)
+            C,m=compute_marginal_and_cumulative(S)
+    else:
+        if chosen_approach=="PIT series":
+            pit = pit_series_list[i]
+            S=survival_from_pit_series(pit)
+            C,m=compute_marginal_and_cumulative(S)
+        elif chosen_approach=="TTC":
+            ttc=ttc_list[i]
+            S=survival_ttc_discrete(ttc,n_periods)
+            C,m=compute_marginal_and_cumulative(S)
+        else:
+            lam = lambda_list[i]
+            S=survival_exponential(lam,n_periods)
+            C,m=compute_marginal_and_cumulative(S)
+    S_list.append(S)
+    C_list.append(C)
+    m_list.append(m)
 
-st.markdown("### Export plots")
-st.write("You can download PNG snapshots of each column's figure below.")
+# -------------------------
+# Display derivation formulas
+# -------------------------
+st.markdown("## Derivation Formulas")
+if compare_mode=="Three approaches":
+    st.markdown(r"""
+**Case 1 (PIT series):**
+$$
+S(0)=1,\quad S(i)=\prod_{k=1}^{i}(1-\mathrm{PiT\_PD}(k)),\quad
+C(i)=1-S(i),\quad m(i)=C(i)-C(i-1)=\mathrm{PiT\_PD}(i)\cdot S(i-1)
+$$
 
-colA, colB, colC = st.columns(3)
-with colA:
-    bts = fig_to_png_bytes(fig1)
-    st.markdown(download_link_for_bytes(bts, "case1_pds.png", "Download Case 1 plots as PNG"), unsafe_allow_html=True)
+**Case 2 (Discrete TTC):**
+$$
+S(i)=(1-p)^i,\quad C(i)=1-(1-p)^i,\quad m(i)=(1-p)^{i-1}\cdot p
+$$
 
-with colB:
-    bts2 = fig_to_png_bytes(fig2)
-    st.markdown(download_link_for_bytes(bts2, "case2_pds.png", "Download Case 2 plots as PNG"), unsafe_allow_html=True)
+**Case 3 (Exponential hazard):**
+$$
+S(t)=e^{-\lambda t},\quad C(t)=1-e^{-\lambda t},\quad m(i)=S(i-1)-S(i)=e^{-\lambda(i-1)}(1-e^{-\lambda})
+$$
+""",unsafe_allow_html=True)
+else:
+    st.markdown(f"**Approach:** {chosen_approach}")
 
-with colC:
-    bts3 = fig_to_png_bytes(fig3)
-    st.markdown(download_link_for_bytes(bts3, "case3_pds.png", "Download Case 3 plots as PNG"), unsafe_allow_html=True)
+# -------------------------
+# Plot rows
+# -------------------------
+st.markdown("## Survival Rate Comparison")
+plot_comparison_row("Survival",periods,S_list,approach_labels,"Survival S(i)")
+
+st.markdown("## Cumulative PD Comparison")
+plot_comparison_row("Cumulative PD",periods,C_list,approach_labels,"Cumulative PD")
+
+st.markdown("## Marginal PD Comparison")
+plot_marginal_row("Marginal PD",periods,m_list,approach_labels)
+
+# -------------------------
+# Show numeric tables
+# -------------------------
+if show_tables:
+    st.markdown("## Tables per column")
+    dfs = df_display_table(periods,S_list,C_list,m_list,approach_labels)
+    for df,label in zip(dfs,approach_labels):
+        st.markdown(f"**{label}**")
+        st.dataframe(df)
