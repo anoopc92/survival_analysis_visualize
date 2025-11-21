@@ -247,50 +247,91 @@ for i in range(3):
 # -------------------------
 # Display derivation formulas with explanations
 # -------------------------
-st.markdown("## Derivation Formulas and Term Explanations")
+st.markdown("## Survival analysis comparison")
 
 with st.expander("Show formulas and explanations"):
     if compare_mode=="Three approaches":
         st.markdown(r"""
 **Case 1 (PIT series)**  
-- \(S(0) = 1\) : initial survival probability  
-- \(S(i) = \prod_{k=1}^{i} (1 - \mathrm{PiT\_PD}(k))\) : survival at period \(i\) as product of survival factors  
-- \(C(i) = 1 - S(i)\) : cumulative probability of default up to period \(i\)  
-- \(m(i) = C(i) - C(i-1) = \mathrm{PiT\_PD}(i) \cdot S(i-1)\) : marginal PD in period \(i\), conditional on survival  
+$$
+S(0) = 1 \quad \text{\small(initial survival probability)}
+$$
+$$
+S(i) = \prod_{k=1}^{i} \big(1 - \mathrm{PiT\_PD}(k)\big) \quad \text{\small(survival at period i)}
+$$
+$$
+C(i) = 1 - S(i) \quad \text{\small(cumulative PD up to period i)}
+$$
+$$
+m(i) = C(i) - C(i-1) = \mathrm{PiT\_PD}(i) \cdot S(i-1) \quad \text{\small(marginal PD in period i)}
+$$
 
 **Case 2 (Discrete TTC)**  
-- \(S(i) = (1-p)^i\) : constant TTC PD per period  
-- \(C(i) = 1 - (1-p)^i\) : cumulative PD  
-- \(m(i) = (1-p)^{i-1} \cdot p\) : marginal PD  
+$$
+S(i) = (1-p)^i \quad \text{\small(constant TTC PD per period)}
+$$
+$$
+C(i) = 1 - (1-p)^i \quad \text{\small(cumulative PD)}
+$$
+$$
+m(i) = (1-p)^{i-1} \cdot p \quad \text{\small(marginal PD)}
+$$
 
 **Case 3 (Exponential hazard)**  
-- \(S(t) = e^{-\lambda t}\) : survival in continuous time  
-- \(C(t) = 1 - e^{-\lambda t}\) : cumulative PD  
-- \(m(i) = S(i-1) - S(i) = e^{-\lambda (i-1)} (1 - e^{-\lambda})\) : discrete marginal PD between i-1 and i
-""",unsafe_allow_html=True)
+$$
+S(t) = e^{-\lambda t} \quad \text{\small(survival probability at time t)}
+$$
+$$
+C(t) = 1 - e^{-\lambda t} \quad \text{\small(cumulative PD at time t)}
+$$
+$$
+m(i) = S(i-1) - S(i) = e^{-\lambda (i-1)} \big(1 - e^{-\lambda}\big) \quad \text{\small(discrete marginal PD at period i)}
+$$
+""", unsafe_allow_html=True)
     else:
         if chosen_approach=="PIT series":
             st.markdown(r"""
 **PIT series**  
-- \(S(0) = 1\) : initial survival probability  
-- \(S(i) = \prod_{k=1}^{i} (1 - \mathrm{PiT\_PD}(k))\) : survival at period \(i\)  
-- \(C(i) = 1 - S(i)\) : cumulative PD  
-- \(m(i) = C(i) - C(i-1) = \mathrm{PiT\_PD}(i) \cdot S(i-1)\) : marginal PD  
-""",unsafe_allow_html=True)
+$$
+S(0) = 1 \quad \text{\small(initial survival probability)}
+$$
+$$
+S(i) = \prod_{k=1}^{i} \big(1 - \mathrm{PiT\_PD}(k)\big) \quad \text{\small(survival at period i)}
+$$
+$$
+C(i) = 1 - S(i) \quad \text{\small(cumulative PD up to period i)}
+$$
+$$
+m(i) = C(i) - C(i-1) = \mathrm{PiT\_PD}(i) \cdot S(i-1) \quad \text{\small(marginal PD in period i)}
+$$
+""", unsafe_allow_html=True)
         elif chosen_approach=="TTC":
             st.markdown(r"""
 **Discrete TTC**  
-- \(S(i) = (1-p)^i\) : constant TTC PD per period  
-- \(C(i) = 1 - (1-p)^i\) : cumulative PD  
-- \(m(i) = (1-p)^{i-1} \cdot p\) : marginal PD  
-""",unsafe_allow_html=True)
+$$
+S(i) = (1-p)^i \quad \text{\small(constant TTC PD per period)}
+$$
+$$
+C(i) = 1 - (1-p)^i \quad \text{\small(cumulative PD)}
+$$
+$$
+m(i) = (1-p)^{i-1} \cdot p \quad \text{\small(marginal PD)}
+$$
+""", unsafe_allow_html=True)
         else:
             st.markdown(r"""
 **Exponential hazard**  
-- \(S(t) = e^{-\lambda t}\) : survival in continuous time  
-- \(C(t) = 1 - e^{-\lambda t}\) : cumulative PD  
-- \(m(i) = S(i-1) - S(i) = e^{-\lambda (i-1)} (1 - e^{-\lambda})\) : discrete marginal PD  
-""",unsafe_allow_html=True)
+$$
+S(t) = e^{-\lambda t} \quad \text{\small(survival probability at time t)}
+$$
+$$
+C(t) = 1 - e^{-\lambda t} \quad \text{\small(cumulative PD at time t)}
+$$
+$$
+m(i) = S(i-1) - S(i) = e^{-\lambda (i-1)} \big(1 - e^{-\lambda}\big) \quad \text{\small(discrete marginal PD at period i)}
+$$
+""", unsafe_allow_html=True)
+
 
 # -------------------------
 # Plot rows
