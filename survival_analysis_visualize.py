@@ -245,29 +245,52 @@ for i in range(3):
     m_list.append(m)
 
 # -------------------------
-# Display derivation formulas
+# Display derivation formulas with explanations
 # -------------------------
-st.markdown("## Derivation Formulas")
-if compare_mode=="Three approaches":
-    st.markdown(r"""
-**Case 1 (PIT series):**
-$$
-S(0)=1,\quad S(i)=\prod_{k=1}^{i}(1-\mathrm{PiT\_PD}(k)),\quad
-C(i)=1-S(i),\quad m(i)=C(i)-C(i-1)=\mathrm{PiT\_PD}(i)\cdot S(i-1)
-$$
+st.markdown("## Derivation Formulas and Term Explanations")
 
-**Case 2 (Discrete TTC):**
-$$
-S(i)=(1-p)^i,\quad C(i)=1-(1-p)^i,\quad m(i)=(1-p)^{i-1}\cdot p
-$$
+with st.expander("Show formulas and explanations"):
+    if compare_mode=="Three approaches":
+        st.markdown(r"""
+**Case 1 (PIT series)**  
+- \(S(0) = 1\) : initial survival probability  
+- \(S(i) = \prod_{k=1}^{i} (1 - \mathrm{PiT\_PD}(k))\) : survival at period \(i\) as product of survival factors  
+- \(C(i) = 1 - S(i)\) : cumulative probability of default up to period \(i\)  
+- \(m(i) = C(i) - C(i-1) = \mathrm{PiT\_PD}(i) \cdot S(i-1)\) : marginal PD in period \(i\), conditional on survival  
 
-**Case 3 (Exponential hazard):**
-$$
-S(t)=e^{-\lambda t},\quad C(t)=1-e^{-\lambda t},\quad m(i)=S(i-1)-S(i)=e^{-\lambda(i-1)}(1-e^{-\lambda})
-$$
+**Case 2 (Discrete TTC)**  
+- \(S(i) = (1-p)^i\) : constant TTC PD per period  
+- \(C(i) = 1 - (1-p)^i\) : cumulative PD  
+- \(m(i) = (1-p)^{i-1} \cdot p\) : marginal PD  
+
+**Case 3 (Exponential hazard)**  
+- \(S(t) = e^{-\lambda t}\) : survival in continuous time  
+- \(C(t) = 1 - e^{-\lambda t}\) : cumulative PD  
+- \(m(i) = S(i-1) - S(i) = e^{-\lambda (i-1)} (1 - e^{-\lambda})\) : discrete marginal PD between i-1 and i
 """,unsafe_allow_html=True)
-else:
-    st.markdown(f"**Approach:** {chosen_approach}")
+    else:
+        if chosen_approach=="PIT series":
+            st.markdown(r"""
+**PIT series**  
+- \(S(0) = 1\) : initial survival probability  
+- \(S(i) = \prod_{k=1}^{i} (1 - \mathrm{PiT\_PD}(k))\) : survival at period \(i\)  
+- \(C(i) = 1 - S(i)\) : cumulative PD  
+- \(m(i) = C(i) - C(i-1) = \mathrm{PiT\_PD}(i) \cdot S(i-1)\) : marginal PD  
+""",unsafe_allow_html=True)
+        elif chosen_approach=="TTC":
+            st.markdown(r"""
+**Discrete TTC**  
+- \(S(i) = (1-p)^i\) : constant TTC PD per period  
+- \(C(i) = 1 - (1-p)^i\) : cumulative PD  
+- \(m(i) = (1-p)^{i-1} \cdot p\) : marginal PD  
+""",unsafe_allow_html=True)
+        else:
+            st.markdown(r"""
+**Exponential hazard**  
+- \(S(t) = e^{-\lambda t}\) : survival in continuous time  
+- \(C(t) = 1 - e^{-\lambda t}\) : cumulative PD  
+- \(m(i) = S(i-1) - S(i) = e^{-\lambda (i-1)} (1 - e^{-\lambda})\) : discrete marginal PD  
+""",unsafe_allow_html=True)
 
 # -------------------------
 # Plot rows
